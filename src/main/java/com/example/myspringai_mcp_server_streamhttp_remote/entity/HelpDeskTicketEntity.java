@@ -1,4 +1,4 @@
-package com.example.myspringai_mcp_server_stdio.entity;
+package com.example.myspringai_mcp_server_streamhttp_remote.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
