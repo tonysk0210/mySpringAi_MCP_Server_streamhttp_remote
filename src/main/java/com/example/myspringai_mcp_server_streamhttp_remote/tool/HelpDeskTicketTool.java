@@ -3,6 +3,7 @@ package com.example.myspringai_mcp_server_streamhttp_remote.tool;
 import com.example.myspringai_mcp_server_streamhttp_remote.entity.HelpDeskTicketEntity;
 import com.example.myspringai_mcp_server_streamhttp_remote.payload.HelpDeskTicketPayload;
 import com.example.myspringai_mcp_server_streamhttp_remote.service.HelpDeskTicketService;
+import io.modelcontextprotocol.spec.McpSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -14,6 +15,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -81,5 +83,58 @@ public class HelpDeskTicketTool {
 
         return tickets;
         // throw new RuntimeException("系統發生錯誤-請聯繫人工客服"); // 用來測試 Tool calling 發生錯誤情境
+    }
+
+    /**
+     * summarizeTickets 是一個 MCP tool：它根據 username 查詢服務工單，
+     * 若 client 支援 MCP Sampling，就把工單資料送給 client 端 LLM 產生友善摘要；若 client 不支援 sampling，則退回原始工單資料。
+     */
+    @McpTool(name = "summarizeTickets", description = "針對指定使用者名稱底下的所有服務工單，產生一段友善且自然的摘要")
+    String summarizeTickets(@McpToolParam(description = "要摘要服務工單的使用者名稱") String username, McpSyncRequestContext ctx) {
+        log.info("正在為使用者「{}」產生服務工單摘要", username);
+
+        // 1. 取得該使用者的所有服務工單
+        List<HelpDeskTicketEntity> tickets = service.getHelpDeskTicketsByUser(username);
+
+        if (tickets.isEmpty()) {
+            return "找不到使用者「" + username + "」的任何服務工單。";
+        }
+
+        /*
+        這段很重要。因為 MCP Sampling 不是 server 自己一定能做，而是要看「連上的 MCP client」有沒有宣告支援 sampling。
+        如果 client 不支援 sampling，這個 server 不能強迫 client 幫它跑 LLM，所以 fallback 回傳原始資料。
+        */
+        if (!ctx.sampleEnabled()) {
+            log.info("已連線的 MCP client 不支援 sampling，將直接回傳原始工單資料。");
+            return tickets.toString();
+        }
+
+        // 2. 把 Java entity 轉成 LLM 比較容易讀的純文字格式。
+        String ticketData = tickets.stream()
+                .map(t -> "工單 #" + t.getId() + " | 問題：" + t.getIssue()
+                        + " | 狀態：" + t.getStatus() + " | 預計完成：" + t.getEta())
+                .collect(Collectors.joining("\n"));
+
+        String systemPrompt = """
+                你是一位友善的服務台助理。請「僅」根據使用者提供的工單資料，
+                為客戶撰寫一段簡短且溫暖的摘要，說明其服務工單的狀態。
+                請提及工單總數，並依狀態分組（OPEN、IN_PROGRESS、CLOSED），
+                同時對仍在處理中的工單給予鼓勵與安慰。內容請控制在 120 字以內，
+                且不得虛構任何工單資料中未出現的資訊。
+                """;
+
+        log.info("正在透過 sampling 向 MCP client 請求 LLM 摘要生成...");
+        ctx.info("正在請求 AI 助理為使用者「" + username + "」摘要 " + tickets.size() + " 張服務工單");
+
+        // 3. 這裡才是真正請 MCP client 執行 LLM sampling。systemPrompt 告訴模型摘要規則，.message(...) 提供實際工單資料。
+        McpSchema.CreateMessageResult result = ctx.sample(spec -> spec
+                .systemPrompt(systemPrompt)
+                .message("以下是使用者「" + username + "」的服務工單：\n" + ticketData));
+
+        // 4. 把 client 回傳的 LLM 結果取出文字，作為 tool 的回傳值。
+        String summary = ((McpSchema.TextContent) result.content()).text();
+
+        log.info("已收到 sampling 回應，client 使用的模型：{}", result.model());
+        return summary;
     }
 }
