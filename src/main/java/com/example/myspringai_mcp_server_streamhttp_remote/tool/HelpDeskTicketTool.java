@@ -61,7 +61,7 @@ public class HelpDeskTicketTool {
     }
 
     @McpTool(name = "getTicketStatus", description = "取得所有「服務工單」並提供工單相關細節，包括工單編號、問題描述、狀態、建立時間及預計完成時間")
-    List<HelpDeskTicketEntity> getTicketStatus(@McpToolParam(description = "用來查詢服務工單狀態的使用者名稱") String username, McpSyncRequestContext ctx) {
+    List<HelpDeskTicketEntity> getTicketStatus(@McpToolParam(description = "用來查詢服務工單狀態的使用者名稱") String username, McpSyncRequestContext ctx) throws InterruptedException {
         log.info("取得 {} 的所有「服務工單」: ", username);
         ctx.info("正在查詢使用者「" + username + "」的服務工單");
 
@@ -69,6 +69,15 @@ public class HelpDeskTicketTool {
         List<HelpDeskTicketEntity> tickets = service.getHelpDeskTicketsByUser(username);
         log.info("共 {} 張「服務工單」 for userName: {}", tickets.size(), username);
         ctx.info("已完成使用者「" + username + "」的服務工單查詢，共 " + tickets.size() + " 張");
+
+        // 2. 模擬一段耗時流程，並每秒向 MCP client 發送一次查詢進度訊息
+        for (int i = 0; i < 10; i++) {
+            Thread.sleep(1000); // 每次先停 1 秒
+            int percent = (i * 100) / 10; // 計算目前百分比
+            // 呼叫 ctx.progress(...) 發送一個進度訊息
+            ctx.progress(spec -> spec.progress(percent)
+                    .message("正在查詢使用者「" + username + "」的服務工單 - 已完成 " + percent + "%"));
+        }
 
         return tickets;
         // throw new RuntimeException("系統發生錯誤-請聯繫人工客服"); // 用來測試 Tool calling 發生錯誤情境
