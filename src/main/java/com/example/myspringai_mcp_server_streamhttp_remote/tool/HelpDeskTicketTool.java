@@ -75,8 +75,9 @@ public class HelpDeskTicketTool {
         // 2. 模擬一段耗時流程，並每秒向 MCP client 發送一次查詢進度訊息
         for (int i = 0; i < 10; i++) {
             Thread.sleep(1000); // 每次先停 1 秒
-            int percent = (i * 100) / 10; // 計算目前百分比
-            // 呼叫 ctx.progress(...) 發送一個進度訊息
+            int percent = (i + 1) * 100 / 10; // 計算目前百分比
+            // 呼叫 ctx.progress(...) 發送一個結構化進度事件；
+            // 若 client 支援，可用來顯示 progress bar 或任務進度。
             ctx.progress(spec -> spec.progress(percent)
                     .message("正在查詢使用者「" + username + "」的服務工單 - 已完成 " + percent + "%"));
         }
@@ -136,5 +137,16 @@ public class HelpDeskTicketTool {
 
         log.info("已收到 sampling 回應，client 使用的模型：{}", result.model());
         return summary;
+
+        /**
+         * 使用者
+         *  -> MCP client 的 LLM
+         *  -> 呼叫 MCP server 的 summarizeTickets tool
+         *  -> server 查 DB
+         *  -> server 透過 ctx.sample(...) 反向請 client 的 LLM 摘要
+         *  -> client LLM 回傳摘要
+         *  -> server return 摘要
+         *  -> client 顯示給使用者
+         */
     }
 }
